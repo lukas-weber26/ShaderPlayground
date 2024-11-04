@@ -1,8 +1,9 @@
-//next make structs and functions to do all of the above things automatically and easily. In the end it should be so easy that loading models does not add significantly more code or require changes. This is the equivialent of creating a shader class, camera class etc.
-//then load models 
 //finally, use the above to experiment with lighting, use it as a basis to complete the rest of learnopnegl. This may end up being a bigger project than expected..
+
 #include "./shader_viewer.h"
-#include <stdio.h>
+#include <assimp/cimport.h>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
 
 camera global_camera = {{0.0, 0.0, 3.0}, {0.0,0.0, -1.0}, {0.0, 1.0, 0.0}, 1.2};
 
@@ -219,7 +220,75 @@ GLFWwindow * window_create() {
 	stbi_set_flip_vertically_on_load(true);
 
 	return window;
-} 
+}
+
+typedef struct basic_model {
+	unsigned int shader_program;
+	char *vertex_source;	
+	char *fragment_source;	
+	char *texture_source;
+	unsigned int VAO;
+	unsigned int VBO;
+	unsigned int EBO; 
+	unsigned int texture;	
+	mat4 transform;
+	mat4 view;
+	mat4 project;
+	mat4 lookat;
+	int n_indices;
+} basic_model;
+
+basic_model basic_model_create(char * texture_source, char * vertex_source, char * fragment_source, float * vertices, unsigned int * indices, unsigned int sizeof_vertices, unsigned int sizeof_indices) {
+	basic_model result;
+	result.vertex_source = strdup(vertex_source); 
+	result.fragment_source = strdup(fragment_source); 
+	result.shader_program = shader_program_create(result.vertex_source, result.fragment_source);
+	result.n_indices = sizeof_indices;
+
+	glGenVertexArrays(1, &result.VAO);
+	glBindVertexArray(result.VAO);
+
+	glGenBuffers(1, &result.VBO);
+	glBindBuffer(GL_ARRAY_BUFFER,result.VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof_vertices, vertices, GL_STATIC_DRAW); //problem was sizeof vertices...
+
+	glGenBuffers(1, &result.EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, result.EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof_indices, indices, GL_STATIC_DRAW);
+	
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
+	glEnableVertexAttribArray(1);
+
+	result.texture_source = strdup(texture_source);
+	result.texture = texture_create(result.texture_source);
+
+	return result;
+}
+
+void basic_model_activate(basic_model model) {
+	shader_program_activate(model.shader_program);	
+	glBindVertexArray(model.VAO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.EBO);
+}
+
+void basic_model_initialize_textures(basic_model model) {
+	shader_program_set_texture(model.shader_program, "input_texture");
+}
+
+void basic_model_update_uniforms(basic_model * model) {
+	camera_get_look_at(model->lookat);
+	camera_get_projection(model->project);
+	shader_program_set_uniform_mat4(model->shader_program, "transform", model->transform);	
+	shader_program_set_uniform_mat4(model->shader_program, "view", model->lookat);	
+	shader_program_set_uniform_mat4(model->shader_program, "project", model->project);	
+}
+
+void basic_model_draw(basic_model model) {
+		glDrawElements(GL_TRIANGLES, model.n_indices, GL_UNSIGNED_INT, 0);
+}
+
 
 int main() {
 	
@@ -230,52 +299,30 @@ int main() {
 	     0.5f,  0.5f, -1.0f,  1.0, 1.0,// top right
 	     0.5f, -0.5f, -1.0f,  1.0, 0.0,// bottom right
 	    -0.5f, -0.5f, -1.0f,  0.0, 0.0,// bottom left
-	    -0.5f,  0.5f, -1.0f,   0.0, 1.0// top left 
+	    -0.5f,  0.5f, -1.0f,   0.0, 1.0,// top left 
+	     0.5f,  0.5f, -2.0f,  1.0, 1.0,// top right
+	     0.5f, -0.5f, -2.0f,  1.0, 0.0,// bottom right
+	    -0.5f, -0.5f, -2.0f,  0.0, 0.0,// bottom left
+	    -0.5f,  0.5f, -2.0f,   0.0, 1.0// top left 
 	};
 
 	unsigned int indices [] = {
 	    0, 1, 3,   // first triangle
-	    1, 2, 3    // second triangle
-	} ;
-	
-	unsigned int VAO;
-	glGenVertexArrays(1, &VAO);
-	glBindVertexArray(VAO);
+	    1, 2, 3,    // second triangle
+	    4, 5, 7,   // first triangle
+	    5, 6, 7,    // second triangle
+	} ;	
 
-	unsigned int VBO;
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER,VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+	basic_model model = basic_model_create("./wall.jpg","./vertex_shader.glsl", "./fragment_shader.glsl", vertices, indices, sizeof(vertices), sizeof(indices));
 
-	unsigned int EBO;
-	glGenBuffers(1, &EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-	unsigned int shader_program = shader_program_create("./vertex_shader.glsl", "./fragment_shader.glsl");
-	unsigned int texture = texture_create("./wall.jpg");
-
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
-	glEnableVertexAttribArray(1);
-
-	mat4 look_at; 
-	mat4 projection;
-	camera_get_look_at(look_at);
-	camera_get_projection(projection);
-
-	mat4 trans;
 	vec4 axis = {0.0, 0.0, 1.0};
-	glm_mat4_identity(trans);
-	glm_rotate(trans, 0, axis);
-	glm_translate_z(trans, -1.0);
+	glm_mat4_identity(model.transform);
+	glm_rotate(model.transform, 0, axis);
+	glm_translate_z(model.transform, -1.0);
 
-	shader_program_activate(shader_program);	
-	shader_program_set_texture(shader_program, "input_texture");
-	shader_program_set_uniform_mat4(shader_program, "transform", trans);	
-	shader_program_set_uniform_mat4(shader_program, "view", look_at);	
-	shader_program_set_uniform_mat4(shader_program, "project", projection);	
+	basic_model_activate(model);
+	basic_model_initialize_textures(model);
+	basic_model_update_uniforms(&model);
 
 	glEnable(GL_DEPTH_TEST);
 
@@ -287,22 +334,10 @@ int main() {
 		glClearColor(0.9, 0.2, 0.2, 0.8);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		shader_program_activate(shader_program);	
-		shader_program_set_texture(shader_program, "input_texture");
-
-		glBindVertexArray(VAO);
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-
-		//some sort of camera class?
-		camera_get_look_at(look_at);
-		camera_get_projection(projection);
+		basic_model_activate(model);
+		basic_model_update_uniforms(&model);
+		basic_model_draw(model);
 	
-		shader_program_set_uniform_mat4(shader_program, "transform", trans);	
-		shader_program_set_uniform_mat4(shader_program, "view", look_at);	
-		shader_program_set_uniform_mat4(shader_program, "project", projection);	
-
-		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 		
