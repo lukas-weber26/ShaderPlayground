@@ -29,15 +29,53 @@ vec3 camera_pos = {0.0, 0.0, 3.0};
 vec3 camera_front = {0.0, 0.0, -1.0};
 vec3 camera_up = {0.0, 1.0, 0.0};
 
+float delta_time = 0.0;
+float last_frame = 0.0;
+
+void mouse_callback(GLFWwindow * window, double xpos, double ypos) {
+	static int first_mouse = true;
+
+	static float lastX = 400;
+	static float lastY = 400;
+	static float pitch = 0;
+	static float yaw = 0;
+	float xoffset = (xpos - lastX) * 0.01;
+	float yoffset = (ypos - lastY) * 0.01;
+
+	if (first_mouse) {
+		lastX = xpos;
+		lastY = ypos;
+		first_mouse = false;
+	}
+
+	yaw += xoffset;
+	pitch += yoffset;
+
+	if (pitch > 89.0)
+		pitch = 89.0;
+	if (pitch < -89.0)
+		pitch = -89.0;
+
+	vec3 direction;
+	//fixed direction vectors
+	direction[0] = cos(glm_rad(yaw)) * cos(glm_rad(pitch));
+	direction[1] = -glm_rad(pitch);
+	direction[2] = sin(glm_rad(yaw)) * cos(glm_rad(pitch));
+	glm_normalize_to(direction, camera_front);
+
+	lastX = xpos;
+	lastY = ypos;
+}
+
 void process_input(GLFWwindow * window) {
-	const float camera_speed = 0.05f;
+	const float camera_speed = 2.0f * delta_time;
 
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
 	}
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
 		vec3 scaled_camera_front;
-		glm_vec3_scale(camera_front, camera_speed, scaled_camera_front);
+		glm_vec3_scale(camera_front, 1.5*camera_speed, scaled_camera_front);
 		glm_vec3_add(camera_pos, scaled_camera_front, camera_pos);
 	}
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
@@ -113,8 +151,10 @@ int main() {
 
 	glfwMakeContextCurrent(window);
 	glfwSetFramebufferSizeCallback(window, window_resize_callback);
+	glfwSetCursorPosCallback(window, mouse_callback);
 	glfwPollEvents();
 	glViewport(0,0, 1920, 1080);	
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	glewExperimental = GL_TRUE;
 	glewInit();
@@ -226,6 +266,10 @@ int main() {
 
 	while(!glfwWindowShouldClose(window)) {
 		process_input(window);
+
+		float current_frame_time = glfwGetTime();
+		delta_time = current_frame_time - last_frame;
+		last_frame = current_frame_time;
 
 		glClearColor(0.9, 0.2, 0.2, 0.8);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
