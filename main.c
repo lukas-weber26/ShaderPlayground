@@ -6,7 +6,6 @@
 //next make structs and functions to do all of the above things automatically and easily. In the end it should be so easy that loading models does not add significantly more code or require changes. This is the equivialent of creating a shader class, camera class etc.
 //then load models
 //finally, use the above to experiment with lighting, use it as a basis to complete the rest of learnopnegl. This may end up being a bigger project than expected..
-#include <cglm/mat4.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -15,6 +14,7 @@
 #include <GLFW/glfw3.h>
 
 #include "./cglm/cam.h"
+#include "./cglm/mat4.h"
 #include "./cglm/vec3.h"
 #include "./cglm/cglm.h"
 #include "./cglm/affine-pre.h"
@@ -25,10 +25,41 @@
 #include <string.h>
 #include <math.h>
 
+vec3 camera_pos = {0.0, 0.0, 3.0};
+vec3 camera_front = {0.0, 0.0, -1.0};
+vec3 camera_up = {0.0, 1.0, 0.0};
+
 void process_input(GLFWwindow * window) {
+	const float camera_speed = 0.05f;
+
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
 	}
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+		vec3 scaled_camera_front;
+		glm_vec3_scale(camera_front, camera_speed, scaled_camera_front);
+		glm_vec3_add(camera_pos, scaled_camera_front, camera_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+		vec3 scaled_camera_front;
+		glm_vec3_scale(camera_front, camera_speed, scaled_camera_front);
+		glm_vec3_sub(camera_pos, scaled_camera_front, camera_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+		vec3 cross;
+		glm_cross(camera_front, camera_up, cross);	
+		glm_vec3_normalize(cross);
+		glm_vec3_scale(cross, camera_speed, cross);
+		glm_vec3_sub(camera_pos, cross, camera_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+		vec3 cross;
+		glm_cross(camera_front, camera_up, cross);	
+		glm_vec3_normalize(cross);
+		glm_vec3_scale(cross, camera_speed, cross);
+		glm_vec3_add(camera_pos, cross, camera_pos);
+	}
+
 }
 
 void window_resize_callback(GLFWwindow * window, int width, int height) {
@@ -123,7 +154,7 @@ int main() {
 	"out vec2 TexCoord;\n"
 	"void main()\n"
 	"{\n"
-	"gl_Position = project*transform*vec4(aPos.x, aPos.y, aPos.z, 1.0);\n" //project*view*
+	"gl_Position = project*view*transform*vec4(aPos.x, aPos.y, aPos.z, 1.0);\n" //project*view*
 	"TexCoord = aTexCoord;\n"
 	"}\0";
 
@@ -169,17 +200,10 @@ int main() {
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
 	glEnableVertexAttribArray(1);
 
-	vec3 camera_pos = {0.0, 0.0, 3.0};
-	vec3 camera_target = {0.0, 0.0, 0.0};
-	vec3 camera_direction;
-	glm_vec3_sub(camera_direction, camera_pos, camera_target);
-	glm_vec3_normalize(camera_direction);
-	vec3 up = {0.0, 1.0, 0.0};
-	vec3 camera_right;
-	glm_vec3_cross(up, camera_direction, camera_right);
-	glm_vec3_normalize(camera_right);
 	mat4 look_at; 
-	glm_lookat(camera_pos, camera_target, up, look_at);
+	vec3 center;
+	glm_vec3_add(camera_pos, camera_front, center);
+	glm_lookat(camera_pos, center, camera_up, look_at);
 		
 	mat4 projection;
 	glm_perspective(glm_rad(45.0f), 1.2f, 0.1f, 100.0f, projection);
@@ -189,9 +213,6 @@ int main() {
 	glm_mat4_identity(trans);
 	glm_rotate(trans, 0, axis);
 	glm_translate_z(trans, -1.0);
-
-	mat4 unit;
-	glm_mat4_identity(unit);
 
 	glUseProgram(shader_program);
 	unsigned int transform_location = glGetUniformLocation(shader_program, "transform");
@@ -205,6 +226,7 @@ int main() {
 
 	while(!glfwWindowShouldClose(window)) {
 		process_input(window);
+
 		glClearColor(0.9, 0.2, 0.2, 0.8);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -214,10 +236,18 @@ int main() {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D,texture);
-		
-		float time = ((float)glfwGetTime())/10;
-		glm_rotate(trans, ((float)glfwGetTime())/10000, axis);
+	
+		mat4 look_at; 
+		vec3 center;
+		glm_vec3_add(camera_pos, camera_front, center);
+		glm_lookat(camera_pos, center, camera_up, look_at);
+	
+		unsigned int transform_location = glGetUniformLocation(shader_program, "transform");
+		unsigned int view_location = glGetUniformLocation(shader_program, "view");
+		unsigned int project_location = glGetUniformLocation(shader_program, "project");
 		glUniformMatrix4fv(transform_location, 1, GL_FALSE, (float *)trans);
+		glUniformMatrix4fv(view_location, 1, GL_FALSE, (float *)look_at);
+		glUniformMatrix4fv(project_location, 1, GL_FALSE, (float *)projection);
 
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
