@@ -1,40 +1,10 @@
 //next make structs and functions to do all of the above things automatically and easily. In the end it should be so easy that loading models does not add significantly more code or require changes. This is the equivialent of creating a shader class, camera class etc.
 //then load models 
 //finally, use the above to experiment with lighting, use it as a basis to complete the rest of learnopnegl. This may end up being a bigger project than expected..
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
-#define GLEW_STATIC
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-
-#include "./cglm/cam.h"
-#include "./cglm/mat4.h"
-#include "./cglm/vec3.h"
-#include "./cglm/cglm.h"
-#include "./cglm/affine-pre.h"
-
-#include <stdbool.h>
+#include "./shader_viewer.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
 
-typedef struct frame_time {
-	float delta_time; 
-	float last_frame;
-} frame_time;
-
-typedef struct camera {
-	vec3 position;
-	vec3 front;
-	vec3 up;
-} camera;
-
-camera global_camera = {{0.0, 0.0, 3.0}, {0.0,0.0, -1.0}, {0.0, 1.0, 0.0}};
-//#define camera_pos global_camera.position
-//#define camera_front global_camera.front
-//#define camera_up global_camera.up
+camera global_camera = {{0.0, 0.0, 3.0}, {0.0,0.0, -1.0}, {0.0, 1.0, 0.0}, 1.2};
 
 void camera_get_look_at(mat4 destination) {
 	vec3 center;
@@ -43,7 +13,7 @@ void camera_get_look_at(mat4 destination) {
 }
 
 void camera_get_projection(mat4 destination) {
-	glm_perspective(glm_rad(45.0f), 1.2f, 0.1f, 100.0f, destination);
+	glm_perspective(glm_rad(45.0f), global_camera.aspect_ratio, 0.1f, 100.0f, destination);
 }
 
 frame_time frame_time_create() {
@@ -125,6 +95,7 @@ void process_input(GLFWwindow * window, frame_time timer) {
 
 void window_resize_callback(GLFWwindow * window, int width, int height) {
 	glViewport(0,0,width, height);	
+	global_camera.aspect_ratio = ((float)width)/((float)height);
 }
 
 void print_error(char * error) {
@@ -154,36 +125,31 @@ void check_shader_success(unsigned int shader, char * error_message) {
 	}
 }
 
-unsigned int shader_program_create() {
-	const char * vertex_shader_source = "#version 330 core\n"
-	"layout (location = 0) in vec3 aPos;\n"
-	"layout (location = 1) in vec2 aTexCoord;\n"
-	"uniform mat4 transform;\n"
-	"uniform mat4 view;\n"
-	"uniform mat4 project;\n"
-	"out vec2 TexCoord;\n"
-	"void main()\n"
-	"{\n"
-	"gl_Position = project*view*transform*vec4(aPos.x, aPos.y, aPos.z, 1.0);\n" //project*view*
-	"TexCoord = aTexCoord;\n"
-	"}\0";
+const char * shader_load_from_file(char * path, char * shader_source) {
+	size_t ret;
+	FILE * shader_file = fopen(path, "r");	
+	if (NULL == shader_file)
+		print_error("Could not open shader file.");	
+	ret = fread(shader_source, sizeof(char), 1024, shader_file);
+	shader_source[ret] = '\n';
+	shader_source[ret+1] = '\0';
+	fclose(shader_file);
+	return shader_source;
+}
 
-	const char * fragment_shader_source = "#version 330 core\n"
-	"in vec2 TexCoord;\n"
-	"out vec4 FragColor;\n"
-	"uniform sampler2D input_texture;\n"
-	"void main()\n"
-	"{\n"
-	"FragColor = texture(input_texture,TexCoord);\n"
-	"}\0";
+unsigned int shader_program_create(char * vertex_path, char * fragment_path) {
 
+	char shader_buffer[1024]; 
+
+	const char * vertex_shader_source_submit = shader_load_from_file(vertex_path, shader_buffer); 
 	unsigned int vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(vertex_shader, 1, &vertex_shader_source, NULL);
+	glShaderSource(vertex_shader, 1, &vertex_shader_source_submit, NULL);
 	glCompileShader(vertex_shader);
 	check_shader_success(vertex_shader, "Bad vertex shader.");
 
+	const char * fragment_shader_source_submit = shader_load_from_file(fragment_path, shader_buffer); 
 	unsigned int fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(fragment_shader, 1, &fragment_shader_source, NULL);
+	glShaderSource(fragment_shader, 1, &fragment_shader_source_submit, NULL);
 	glCompileShader(fragment_shader);
 	check_shader_success(fragment_shader, "Bad fragment shader.");
 
@@ -204,21 +170,19 @@ void shader_program_activate(unsigned int shader_program) {
 }
 
 void shader_program_set_uniform_mat4(unsigned int shader_program, char * uniform_name, mat4 uniform_value) {
-	//this may end up requiring you to activate the program first
 	unsigned int uniform_location = glGetUniformLocation(shader_program, uniform_name);
 	glUniformMatrix4fv(uniform_location, 1, GL_FALSE, (float *)uniform_value);
 }
 
 void shader_program_set_texture(unsigned int shader_program, char * uniform_name) {
-	//this may end up requiring you to activate the program first
 	unsigned int uniform_location = glGetUniformLocation(shader_program, "input_texture");	
 	glUniform1i(uniform_location, 0); //this zero coresonponds to GL_TEXTURE0
 }
 
-unsigned int texture_create() {
+unsigned int texture_create(char * texture_path) {
 	unsigned int texture;
 	int texture_width, texture_height, texture_channels;
-	unsigned char * texture_data = stbi_load("./wall.jpg", &texture_width, &texture_height, &texture_channels, 0);
+	unsigned char * texture_data = stbi_load(texture_path, &texture_width, &texture_height, &texture_channels, 0);
 
 	if (!texture_data)
 		print_error("Failed to load texture.");
@@ -288,15 +252,13 @@ int main() {
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-	unsigned int shader_program = shader_program_create();
-	unsigned int texture = texture_create();
+	unsigned int shader_program = shader_program_create("./vertex_shader.glsl", "./fragment_shader.glsl");
+	unsigned int texture = texture_create("./wall.jpg");
 
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
 	glEnableVertexAttribArray(1);
-
-	//some sort of camera class?
 
 	mat4 look_at; 
 	mat4 projection;
