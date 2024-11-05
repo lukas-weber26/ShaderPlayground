@@ -11,6 +11,12 @@
 #include <stdlib.h>
 #include <time.h>
 
+void raise_error(char * error_string) {
+	printf("%s\n", error_string);
+	exit(0);
+}
+
+
 void performance_timer(char * string) {
 	static long prev_seconds = 0; 
 	static long prev_nanoseconds = 0;
@@ -63,6 +69,10 @@ void texture_catalouge_add(unsigned int gl_texture_id, unsigned int texture_inde
 }
 
 void global_texture_catalouge_free() {
+	for (int i = 0; i < global_textures.n_items; i ++) {
+		const unsigned int delete_texture = global_textures.gl_texture_ids[i];
+		glDeleteTextures(1,&delete_texture);
+	}
 	free(global_textures.texture_indices);
 	free(global_textures.gl_texture_ids);
 }
@@ -155,10 +165,6 @@ void process_input(GLFWwindow * window, frame_time timer) {
 	}
 
 }
-void raise_error(char * error_string) {
-	printf("%s\n", error_string);
-	exit(0);
-}
 
 void window_resize_callback(GLFWwindow * window, int width, int height) {
 	glViewport(0,0,width, height);	
@@ -217,8 +223,9 @@ typedef struct scene {
 
 void scene_add_model(scene * input_scene, model * new_model) {
 	if (input_scene->n_models >= input_scene->max_models) {
-		input_scene->max_models *= 2;	
-		input_scene->models = realloc(input_scene->models, sizeof(model *) * input_scene->max_models);
+		raise_error("Scene max model count exceed.");
+		//input_scene->max_models *= 2;	
+		//input_scene->models = realloc(input_scene->models, sizeof(model *) * input_scene->max_models);
 	}
 	input_scene->models[input_scene->n_models] = new_model;
 	input_scene->n_models++;
@@ -233,7 +240,6 @@ model * model_create (scene * input_scene, unsigned int mesh_loc) {
 	new_model->n_vertices = model_mesh->mNumVertices;
 	new_model->vertices = calloc(8*new_model->n_vertices,sizeof(float));
 
-	#pragma omp parallel for
 	for (int i = 0; i < new_model->n_vertices; i ++) {
 		new_model->vertices[8*i] = model_mesh->mVertices[i].x;
 		new_model->vertices[8*i+1] = model_mesh->mVertices[i].y;
@@ -249,7 +255,6 @@ model * model_create (scene * input_scene, unsigned int mesh_loc) {
 	new_model->indices = calloc(new_model->n_indices,sizeof(unsigned int));
 
 	//this loop can run at the same time as the previous
-	#pragma omp parallel for
 	for (int i = 0; i < model_mesh->mNumFaces; i ++) {
 		for (int j = 0; j < 3; j++) {
 			new_model->indices[3*i+j] = model_mesh->mFaces[i].mIndices[j];
@@ -328,9 +333,8 @@ scene * scene_create (char * model_name) {
 		sprintf(error_buff, "Failed to load model root node.");
 		raise_error(error_buff);
 	}
-
 	new_scene->n_models = 0;
-	new_scene->max_models = 10;
+	new_scene->max_models = new_scene->model_data->mNumMeshes; //10;
 	new_scene->models = calloc(new_scene->max_models , sizeof(model*));
 
 	performance_timer("Starting to add meshes to scene.");
@@ -501,6 +505,22 @@ void scene_draw_objects(scene * draw_scene) {
 	} 
 }
 
+void model_free(model * old_model) {
+	free(old_model->indices);
+	free(old_model->vertices);
+	free(old_model);
+}
+
+void scene_free(scene * old_scene) {
+	for (int i = 0; i < old_scene->n_models; i ++) {
+		model_free(old_scene->models[i]);
+	}
+	glDeleteProgram(old_scene->shader_program);
+	free(old_scene->models);	
+	aiReleaseImport(old_scene->model_data);
+	free(old_scene);
+} 
+
 int main () {
 	performance_timer("Startup");
 	global_textures = texture_catalouge_create();
@@ -539,4 +559,5 @@ int main () {
 
 	glfwTerminate();
 	global_texture_catalouge_free();
+	scene_free(new_scene);
 }
