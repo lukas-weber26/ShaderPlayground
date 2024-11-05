@@ -8,6 +8,64 @@
 #include <assimp/postprocess.h>
 #include <assimp/types.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+void performance_timer(char * string) {
+	static long prev_seconds = 0; 
+	static long prev_nanoseconds = 0;
+	struct timespec current_time;
+	clock_gettime(CLOCK_REALTIME, &current_time);
+	long diff_seconds = current_time.tv_sec - prev_seconds;
+	long diff_nanoseconds = current_time.tv_nsec - prev_nanoseconds;
+	prev_seconds = current_time.tv_sec;
+	prev_nanoseconds = current_time.tv_nsec;
+	printf ("Timer: %s. Seconds: %ld, Nanoseconds: %ld\n", string, diff_seconds, diff_nanoseconds);
+}
+
+typedef	struct texture_catalouge {
+	unsigned int * gl_texture_ids; 
+	unsigned int * texture_indices; 
+	int n_items;
+	int max_items;
+} texture_catalouge;  
+
+texture_catalouge global_textures;
+
+texture_catalouge texture_catalouge_create () {
+	texture_catalouge result;
+	result.n_items = 0;
+	result.max_items = 100;
+	result.gl_texture_ids= calloc(result.max_items, sizeof(unsigned int));
+	result.texture_indices= calloc(result.max_items, sizeof(unsigned int));
+	return result;
+}
+
+bool texture_catalouge_search(unsigned int texture_index, unsigned int *result) {
+	for (int i = 0; i < global_textures.n_items; i ++) {
+		if (global_textures.texture_indices[i] == texture_index) {
+			*result = global_textures.gl_texture_ids[i];	
+			return true; 
+		}
+	}
+	return false;
+}
+
+void texture_catalouge_add(unsigned int gl_texture_id, unsigned int texture_index) {
+	if (global_textures.n_items >= global_textures.max_items) {
+		global_textures.max_items *= 2;
+		global_textures.gl_texture_ids= realloc(global_textures.gl_texture_ids, sizeof(unsigned int) * global_textures.max_items);	
+		global_textures.texture_indices= realloc(global_textures.texture_indices, sizeof(unsigned int) * global_textures.max_items);	
+	}	
+	global_textures.gl_texture_ids[global_textures.n_items] = texture_index;
+	global_textures.texture_indices[global_textures.n_items] = gl_texture_id;
+	global_textures.n_items ++;
+}
+
+void global_texture_catalouge_free() {
+	free(global_textures.texture_indices);
+	free(global_textures.gl_texture_ids);
+}
 
 camera global_camera = {{0.0, 0.0, 3.0}, {0.0,0.0, -1.0}, {0.0, 1.0, 0.0}, 1.2};
 
@@ -175,7 +233,7 @@ model * model_create (scene * input_scene, unsigned int mesh_loc) {
 	new_model->n_vertices = model_mesh->mNumVertices;
 	new_model->vertices = calloc(8*new_model->n_vertices,sizeof(float));
 
-	//parallelize this in the future
+	#pragma omp parallel for
 	for (int i = 0; i < new_model->n_vertices; i ++) {
 		new_model->vertices[8*i] = model_mesh->mVertices[i].x;
 		new_model->vertices[8*i+1] = model_mesh->mVertices[i].y;
@@ -191,6 +249,7 @@ model * model_create (scene * input_scene, unsigned int mesh_loc) {
 	new_model->indices = calloc(new_model->n_indices,sizeof(unsigned int));
 
 	//this loop can run at the same time as the previous
+	#pragma omp parallel for
 	for (int i = 0; i < model_mesh->mNumFaces; i ++) {
 		for (int j = 0; j < 3; j++) {
 			new_model->indices[3*i+j] = model_mesh->mFaces[i].mIndices[j];
@@ -199,26 +258,36 @@ model * model_create (scene * input_scene, unsigned int mesh_loc) {
 
 	//texture
 	unsigned int texture_index = model_mesh->mMaterialIndex; //this is ok
-	struct aiMaterial * material = input_scene->model_data->mMaterials[texture_index]; //this was crashing
-	unsigned int texture_count = aiGetMaterialTextureCount(material, aiTextureType_DIFFUSE);
+	unsigned int gl_texture;
 
-	struct aiString texture_path; 
-	if (aiGetMaterialTexture(material, aiTextureType_DIFFUSE, 0, &texture_path, NULL, NULL, NULL, NULL, NULL, NULL) == aiReturn_SUCCESS) {
+	//cation, this condition is quite heavily loaded
+	if (!texture_catalouge_search(texture_index, &new_model->texture)) { 
+		//texture has to be generated
+		struct aiMaterial * material = input_scene->model_data->mMaterials[texture_index]; 
+		unsigned int texture_count = aiGetMaterialTextureCount(material, aiTextureType_DIFFUSE);
+		struct aiString texture_path;
 
-		int texture_width, texture_height, texture_channels;
-		unsigned char * texture_data = stbi_load(texture_path.data, &texture_width, &texture_height, &texture_channels, 0);
+		if (aiGetMaterialTexture(material, aiTextureType_DIFFUSE, 0, &texture_path, NULL, NULL, NULL, NULL, NULL, NULL) == aiReturn_SUCCESS) {
 
-		if (!texture_data) {
-			raise_error("Failed to load texture.");
+			int texture_width, texture_height, texture_channels;
+			unsigned char * texture_data = stbi_load(texture_path.data, &texture_width, &texture_height, &texture_channels, 0);
+
+			if (!texture_data) {
+				raise_error("Failed to load texture.");
+			}
+
+			glGenTextures(1, &new_model->texture); 
+			glActiveTexture(GL_TEXTURE0); 
+			glBindTexture(GL_TEXTURE_2D, new_model->texture); 
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0, GL_RGB, GL_UNSIGNED_BYTE, texture_data);
+			glGenerateMipmap(GL_TEXTURE_2D);
+			stbi_image_free(texture_data);
+			texture_catalouge_add(new_model->texture, texture_index);
+
+
+		} else {
+			raise_error("No diffuse texture found");
 		}
-
-		glGenTextures(1, &new_model->texture); //should probably be done in bulk... then again, all textures should be buffered..
-		glActiveTexture(GL_TEXTURE0); 
-		glBindTexture(GL_TEXTURE_2D, new_model->texture); 
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0, GL_RGB, GL_UNSIGNED_BYTE, texture_data);
-		glGenerateMipmap(GL_TEXTURE_2D);
-		stbi_image_free(texture_data);
-
 	}
 
 	return new_model;
@@ -264,6 +333,7 @@ scene * scene_create (char * model_name) {
 	new_scene->max_models = 10;
 	new_scene->models = calloc(new_scene->max_models , sizeof(model*));
 
+	performance_timer("Starting to add meshes to scene.");
 	scene_add_meshes(new_scene, root_node);	
 
 	glm_mat4_identity(new_scene->transform); //placed here for my sanity
@@ -432,13 +502,19 @@ void scene_draw_objects(scene * draw_scene) {
 }
 
 int main () {
-	//these two could run in parallel...
+	performance_timer("Startup");
+	global_textures = texture_catalouge_create();
 	frame_time timer = frame_time_create();
 	GLFWwindow * window = window_create();	
+	performance_timer("Window created");
 	scene * new_scene = scene_create("./backpack.obj");
+	performance_timer("Scene created");
 
+	//these two could run in parallel...
 	scene_generate_buffers(new_scene);
+	performance_timer("Buffers created");
 	scene_generate_shaders(new_scene, "./vertex_shader3.glsl", "./fragment_shader3.glsl");
+	performance_timer("Shaders created");
 
 	//these transformations are just for fun
 	vec4 axis = {0.0, 0.0, 1.0};
@@ -462,4 +538,5 @@ int main () {
 	}
 
 	glfwTerminate();
+	global_texture_catalouge_free();
 }
