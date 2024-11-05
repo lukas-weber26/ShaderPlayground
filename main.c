@@ -5,6 +5,7 @@
 #include <assimp/mesh.h>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <stdio.h>
 
 camera global_camera = {{0.0, 0.0, 3.0}, {0.0,0.0, -1.0}, {0.0, 1.0, 0.0}, 1.2};
 
@@ -240,6 +241,8 @@ scene * scene_create (char * model_name) {
 	new_scene->models = calloc(new_scene->max_models , sizeof(model*));
 
 	scene_add_meshes(new_scene, root_node);	
+
+	glm_mat4_identity(new_scene->transform); //placed here for my sanity
 	return new_scene;
 }
 
@@ -364,6 +367,16 @@ void shader_program_set_uniform_mat4(unsigned int shader_program, char * uniform
 	glUniformMatrix4fv(uniform_location, 1, GL_FALSE, (float *)uniform_value);
 }
 
+void print_mat4(mat4 matrix) {
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			printf("%f ", matrix[i][j]);
+		} 	
+		printf("\n");
+	} 	
+	printf("\n");
+}
+
 void scene_draw_objects(scene * draw_scene) {
 	
 	glUseProgram(draw_scene->shader_program);
@@ -372,6 +385,11 @@ void scene_draw_objects(scene * draw_scene) {
 	camera_get_look_at(draw_scene->lookat);
 	camera_get_projection(draw_scene->project);
 
+	//these vertices are messed up!!!!
+	
+	//print_mat4(draw_scene->transform);
+	//print_mat4(draw_scene->lookat);
+	//print_mat4(draw_scene->project);
 	shader_program_set_uniform_mat4(draw_scene->shader_program, "transform", draw_scene->transform);	
 	shader_program_set_uniform_mat4(draw_scene->shader_program, "view", draw_scene->lookat);	
 	shader_program_set_uniform_mat4(draw_scene->shader_program, "project", draw_scene->project);	
@@ -389,6 +407,10 @@ int main () {
 
 	scene_generate_buffers(new_scene);
 	scene_generate_shaders(new_scene, "./vertex_shader3.glsl", "./fragment_shader3.glsl");
+	
+	vec4 axis = {0.0, 0.0, 1.0};
+	glm_rotate(new_scene->transform, 0, axis);
+	glm_translate_z(new_scene->transform, -1.0);
 	
 	glEnable(GL_DEPTH_TEST);
 
