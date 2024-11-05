@@ -256,9 +256,9 @@ basic_model basic_model_create(char * texture_source, char * vertex_source, char
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, result.EBO);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof_indices, indices, GL_STATIC_DRAW);
 	
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), (void*)(3*sizeof(float)));
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)(6*sizeof(float)));
 	glEnableVertexAttribArray(1);
 
 	result.texture_source = strdup(texture_source);
@@ -288,32 +288,53 @@ void basic_model_update_uniforms(basic_model * model) {
 void basic_model_draw(basic_model model) {
 		glDrawElements(GL_TRIANGLES, model.n_indices, GL_UNSIGNED_INT, 0);
 }
+	
+void print_structure(struct aiNode * node) {
+	printf("New node with %d meshes and %d children.\n", node->mNumMeshes, node->mNumChildren);
+	for (int i = 0; i < node->mNumChildren; i++) {
+		print_structure(node->mChildren[i]);
+	}
+}
 
+basic_model basic_model_from_assimp() {
+	const struct aiScene * scene = aiImportFile("./backpack.obj", aiProcess_Triangulate | aiProcess_FlipUVs);	
+
+	if (NULL == scene) 
+		print_error("Assimp failed to load the model.");	
+
+	struct aiNode *root = scene->mRootNode;
+	print_structure(root);
+
+	aiReleaseImport(scene);
+}
 
 int main() {
 	
 	GLFWwindow * window = window_create();
 	frame_time timer = frame_time_create();
 
-	float vertices[] = {
-	     0.5f,  0.5f, -1.0f,  1.0, 1.0,// top right
-	     0.5f, -0.5f, -1.0f,  1.0, 0.0,// bottom right
-	    -0.5f, -0.5f, -1.0f,  0.0, 0.0,// bottom left
-	    -0.5f,  0.5f, -1.0f,   0.0, 1.0,// top left 
-	     0.5f,  0.5f, -2.0f,  1.0, 1.0,// top right
-	     0.5f, -0.5f, -2.0f,  1.0, 0.0,// bottom right
-	    -0.5f, -0.5f, -2.0f,  0.0, 0.0,// bottom left
-	    -0.5f,  0.5f, -2.0f,   0.0, 1.0// top left 
-	};
+	//float vertices[] = {
+	//     0.5f,  0.5f, -1.0f, 0.0,0.0,0.0, 1.0, 1.0,// top right
+	//     0.5f, -0.5f, -1.0f, 0.0,0.0,0.0, 1.0, 0.0,// bottom right
+	//    -0.5f, -0.5f, -1.0f, 0.0,0.0,0.0, 0.0, 0.0,// bottom left
+	//    -0.5f,  0.5f, -1.0f, 0.0,0.0,0.0, 0.0, 1.0,// top left 
+	//     0.5f,  0.5f, -2.0f, 0.0,0.0,0.0, 1.0, 1.0,// top right
+	//     0.5f, -0.5f, -2.0f, 0.0,0.0,0.0, 1.0, 0.0,// bottom right
+	//    -0.5f, -0.5f, -2.0f, 0.0,0.0,0.0, 0.0, 0.0,// bottom left
+	//    -0.5f,  0.5f, -2.0f, 0.0,0.0,0.0, 0.0, 1.0// top left 
+	//};
 
-	unsigned int indices [] = {
-	    0, 1, 3,   // first triangle
-	    1, 2, 3,    // second triangle
-	    4, 5, 7,   // first triangle
-	    5, 6, 7,    // second triangle
-	} ;	
+	//unsigned int indices [] = {
+	//    0, 1, 3,   // first triangle
+	//    1, 2, 3,    // second triangle
+	//    4, 5, 7,   // first triangle
+	//    5, 6, 7,    // second triangle
+	//} ;	
 
-	basic_model model = basic_model_create("./wall.jpg","./vertex_shader.glsl", "./fragment_shader.glsl", vertices, indices, sizeof(vertices), sizeof(indices));
+	//basic_model model = basic_model_create("./wall.jpg","./vertex_shader.glsl", "./fragment_shader.glsl", vertices, indices, sizeof(vertices), sizeof(indices));
+
+	basic_model model = basic_model_from_assimp();
+	exit(0);
 
 	vec4 axis = {0.0, 0.0, 1.0};
 	glm_mat4_identity(model.transform);
