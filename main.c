@@ -2,9 +2,11 @@
 
 #include <alloca.h>
 #include <assimp/cimport.h>
+#include <assimp/material.h>
 #include <assimp/mesh.h>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/types.h>
 #include <stdio.h>
 
 camera global_camera = {{0.0, 0.0, 3.0}, {0.0,0.0, -1.0}, {0.0, 1.0, 0.0}, 1.2};
@@ -139,7 +141,7 @@ typedef struct model {
 	unsigned int VAO;
 	unsigned int VBO;
 	unsigned int EBO;
-	//textures, lighting, etc.... (after I can display these things...) 
+	unsigned int texture;
 } model;
 
 typedef struct scene {
@@ -195,7 +197,29 @@ model * model_create (scene * input_scene, unsigned int mesh_loc) {
 		}
 	}
 
-	//can also load a texture here.....
+	//texture
+	unsigned int texture_index = model_mesh->mMaterialIndex; //this is ok
+	struct aiMaterial * material = input_scene->model_data->mMaterials[texture_index]; //this was crashing
+	unsigned int texture_count = aiGetMaterialTextureCount(material, aiTextureType_DIFFUSE);
+
+	struct aiString texture_path; 
+	if (aiGetMaterialTexture(material, aiTextureType_DIFFUSE, 0, &texture_path, NULL, NULL, NULL, NULL, NULL, NULL) == aiReturn_SUCCESS) {
+
+		int texture_width, texture_height, texture_channels;
+		unsigned char * texture_data = stbi_load(texture_path.data, &texture_width, &texture_height, &texture_channels, 0);
+
+		if (!texture_data) {
+			raise_error("Failed to load texture.");
+		}
+
+		glGenTextures(1, &new_model->texture); //should probably be done in bulk... then again, all textures should be buffered..
+		glActiveTexture(GL_TEXTURE0); 
+		glBindTexture(GL_TEXTURE_2D, new_model->texture); 
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0, GL_RGB, GL_UNSIGNED_BYTE, texture_data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+		stbi_image_free(texture_data);
+
+	}
 
 	return new_model;
 }
@@ -352,10 +376,18 @@ void scene_generate_shaders(scene * current_scene, char * vertex_path, char * fr
 	current_scene->shader_program = shader_program;
 }
 
-void model_draw(model * draw_model) {
+void model_draw(model * draw_model, unsigned int shader_program) {
 	glBindVertexArray(draw_model->VAO);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw_model->EBO);
+
+	//belive that this is needed on evey draw	
+	glActiveTexture(GL_TEXTURE0); 
+	glBindTexture(GL_TEXTURE_2D, draw_model->texture); 
+	unsigned int uniform_location = glGetUniformLocation(shader_program, "input_texture");	
+	glUniform1i(uniform_location, 0); 
+	
 	glDrawElements(GL_TRIANGLES, draw_model->n_indices, GL_UNSIGNED_INT, 0);
+	
 	GLenum error = glGetError();
 	if (error != GL_NO_ERROR) {
 		printf("Error detected: %x\n", error);
@@ -395,7 +427,7 @@ void scene_draw_objects(scene * draw_scene) {
 	shader_program_set_uniform_mat4(draw_scene->shader_program, "project", draw_scene->project);	
 
 	for (int i = 0; i < n_models; i ++) {
-		model_draw(draw_scene->models[i]);
+		model_draw(draw_scene->models[i], draw_scene->shader_program);
 	} 
 }
 
@@ -407,7 +439,8 @@ int main () {
 
 	scene_generate_buffers(new_scene);
 	scene_generate_shaders(new_scene, "./vertex_shader3.glsl", "./fragment_shader3.glsl");
-	
+
+	//these transformations are just for fun
 	vec4 axis = {0.0, 0.0, 1.0};
 	glm_rotate(new_scene->transform, 0, axis);
 	glm_translate_z(new_scene->transform, -1.0);
