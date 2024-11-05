@@ -1,7 +1,8 @@
-//finally, use the above to experiment with lighting, use it as a basis to complete the rest of learnopnegl. This may end up being a bigger project than expected..
+#include "shader_viewer.h"
 
-#include "./shader_viewer.h"
+#include <alloca.h>
 #include <assimp/cimport.h>
+#include <assimp/mesh.h>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
@@ -93,15 +94,210 @@ void process_input(GLFWwindow * window, frame_time timer) {
 	}
 
 }
+void raise_error(char * error_string) {
+	printf("%s\n", error_string);
+	exit(0);
+}
 
 void window_resize_callback(GLFWwindow * window, int width, int height) {
 	glViewport(0,0,width, height);	
 	global_camera.aspect_ratio = ((float)width)/((float)height);
 }
 
-void print_error(char * error) {
-	printf("%s\n", error);
-	exit(0);
+GLFWwindow * window_create() {
+	glfwInit();
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+	GLFWwindow * window = glfwCreateWindow(1920, 1080, "Shader display", NULL, NULL);
+
+	if (NULL == window)
+		raise_error("Failed to create a window.");	
+
+	glfwMakeContextCurrent(window);
+	glfwSetFramebufferSizeCallback(window, window_resize_callback);
+	glfwSetCursorPosCallback(window, mouse_callback);
+	glfwPollEvents();
+	glViewport(0,0, 1920, 1080);	
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+	glewExperimental = GL_TRUE;
+	glewInit();
+	stbi_set_flip_vertically_on_load(true);
+
+	return window;
+}
+
+typedef struct model {
+	unsigned int mesh;
+	float * vertices;
+	int n_vertices;
+	unsigned int * indices;
+	int n_indices;
+	unsigned int VAO;
+	unsigned int VBO;
+	unsigned int EBO;
+	//textures, lighting, etc.... (after I can display these things...) 
+} model;
+
+typedef struct scene {
+	const struct aiScene * model_data;
+	struct model ** models;
+	int n_models;
+	int max_models;
+	unsigned int shader_program;
+	int n_indices;
+	mat4 transform;
+	mat4 view;
+	mat4 project;
+	mat4 lookat;
+} scene;
+
+void scene_add_model(scene * input_scene, model * new_model) {
+	if (input_scene->n_models >= input_scene->max_models) {
+		input_scene->max_models *= 2;	
+		input_scene->models = realloc(input_scene->models, sizeof(model *) * input_scene->max_models);
+	}
+	input_scene->models[input_scene->n_models] = new_model;
+	input_scene->n_models++;
+}
+
+model * model_create (scene * input_scene, unsigned int mesh_loc) {
+	model * new_model = calloc(1,sizeof(model));
+	new_model->mesh = mesh_loc;
+
+	struct aiMesh * model_mesh = input_scene->model_data->mMeshes[mesh_loc];
+
+	new_model->n_vertices = model_mesh->mNumVertices;
+	new_model->vertices = calloc(8*new_model->n_vertices,sizeof(float));
+
+	//parallelize this in the future
+	for (int i = 0; i < new_model->n_vertices; i ++) {
+		new_model->vertices[8*i] = model_mesh->mVertices[i].x;
+		new_model->vertices[8*i+1] = model_mesh->mVertices[i].y;
+		new_model->vertices[8*i+2] = model_mesh->mVertices[i].z;
+		new_model->vertices[8*i+3] = model_mesh->mNormals[i].x;
+		new_model->vertices[8*i+4] = model_mesh->mNormals[i].y;
+		new_model->vertices[8*i+5] = model_mesh->mNormals[i].z;
+		new_model->vertices[8*i+6] = model_mesh->mTextureCoords[0][i].x; //0 corresponds to first texture
+		new_model->vertices[8*i+7] = model_mesh->mTextureCoords[0][i].y;
+	}
+
+	new_model->n_indices = model_mesh->mNumFaces * 3; //3 corresponds to three indices per face for a triangle
+	new_model->indices = calloc(new_model->n_indices,sizeof(unsigned int));
+
+	//this loop can run at the same time as the previous
+	for (int i = 0; i < model_mesh->mNumFaces; i ++) {
+		for (int j = 0; j < 3; j++) {
+			new_model->indices[3*i+j] = model_mesh->mFaces[i].mIndices[j];
+		}
+	}
+
+	//can also load a texture here.....
+
+	return new_model;
+}
+
+void scene_print_info(scene * new_scene) {
+	printf("Scene loaded with %d models.\n", new_scene->n_models);
+	for (int i = 0; i < new_scene->n_models; i ++) {
+		printf("Model with %d vertices, and %d indices.\n", new_scene->models[i]->n_vertices, new_scene->models[i]->n_indices);
+	}
+}
+
+void scene_add_meshes(scene * input_scene, const struct aiNode * node) {
+	for (int i = 0; i < node->mNumMeshes; i++) {
+		model * new_model = model_create(input_scene, node->mMeshes[i]);
+		scene_add_model(input_scene, new_model);
+	}
+
+	for (int i = 0; i < node->mNumChildren; i++) {
+		scene_add_meshes(input_scene, node->mChildren[i]);
+	}
+} 
+
+scene * scene_create (char * model_name) {
+	scene * new_scene = calloc(1, sizeof(scene));
+	new_scene->model_data = aiImportFile(model_name, aiProcess_Triangulate | aiProcess_FlipUVs);
+
+	if (NULL == new_scene) {
+		char * error_buff = (char *)alloca(sizeof(char)*512);
+		sprintf(error_buff, "Failed to load model at %s.", model_name);
+		raise_error(error_buff);
+	}
+
+	const struct aiNode * root_node = new_scene->model_data->mRootNode;
+
+	if (NULL == root_node) {
+		char * error_buff = (char *)alloca(sizeof(char)*512);
+		sprintf(error_buff, "Failed to load model root node.");
+		raise_error(error_buff);
+	}
+
+	new_scene->n_models = 0;
+	new_scene->max_models = 10;
+	new_scene->models = calloc(new_scene->max_models , sizeof(model*));
+
+	scene_add_meshes(new_scene, root_node);	
+	return new_scene;
+}
+
+void model_generate_buffers(model * current_model, unsigned int VAO, unsigned int VBO, unsigned int EBO) {
+	glBindVertexArray(VAO);
+	
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, current_model->n_vertices*8*sizeof(float),current_model->vertices, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, current_model->n_indices*sizeof(unsigned int), current_model->indices, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)(3*sizeof(float)));
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)(6*sizeof(float)));
+
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+
+	current_model->VAO = VAO;	
+	current_model->VBO = VBO;	
+	current_model->EBO = EBO;	
+}
+
+void scene_generate_buffers(scene * current_scene) {
+	int n_models = current_scene->n_models;
+
+	unsigned int *VAOS = calloc(n_models,sizeof(unsigned int));
+	unsigned int *VBOS = calloc(n_models,sizeof(unsigned int));
+	unsigned int *EBOS = calloc(n_models,sizeof(unsigned int));
+
+	glGenVertexArrays(n_models,VAOS);
+	glGenBuffers(n_models,VBOS);
+	glGenBuffers(n_models,EBOS);
+
+	for (int i = 0; i < n_models; i ++) {
+		model_generate_buffers(current_scene->models[i], VAOS[i], VBOS[i], EBOS[i]);
+	} 
+
+	free(VAOS);
+	free(VBOS);
+	free(EBOS);
+}
+
+const char * shader_load_from_file(char * path, char * shader_source) {
+	size_t ret;
+	FILE * shader_file = fopen(path, "r");	
+	if (NULL == shader_file) {
+		char * error_buff = (char *)alloca(sizeof(char)*512);
+		sprintf(error_buff, "Failed to load shader at %s.", shader_source);
+		raise_error(error_buff);
+	}
+	ret = fread(shader_source, sizeof(char), 1024, shader_file);
+	shader_source[ret] = '\n';
+	shader_source[ret+1] = '\0';
+	fclose(shader_file);
+	return shader_source;
 }
 
 void check_program_success(unsigned int program) {
@@ -111,7 +307,7 @@ void check_program_success(unsigned int program) {
 		char error_buffer[512];
 		glGetProgramInfoLog(program, 512, NULL, error_buffer);
 		printf("%s\n", error_buffer);
-		print_error("Bad program.");
+		raise_error("Bad program.");
 	}
 }
 
@@ -122,24 +318,11 @@ void check_shader_success(unsigned int shader, char * error_message) {
 		char error_buffer[512];
 		glGetShaderInfoLog(shader, 512, NULL, error_buffer);
 		printf("%s\n", error_buffer);
-		print_error(error_message);
+		raise_error(error_message);
 	}
 }
 
-const char * shader_load_from_file(char * path, char * shader_source) {
-	size_t ret;
-	FILE * shader_file = fopen(path, "r");	
-	if (NULL == shader_file)
-		print_error("Could not open shader file.");	
-	ret = fread(shader_source, sizeof(char), 1024, shader_file);
-	shader_source[ret] = '\n';
-	shader_source[ret+1] = '\0';
-	fclose(shader_file);
-	return shader_source;
-}
-
-unsigned int shader_program_create(char * vertex_path, char * fragment_path) {
-
+void scene_generate_shaders(scene * current_scene, char * vertex_path, char * fragment_path) {
 	char shader_buffer[1024]; 
 
 	const char * vertex_shader_source_submit = shader_load_from_file(vertex_path, shader_buffer); 
@@ -163,11 +346,17 @@ unsigned int shader_program_create(char * vertex_path, char * fragment_path) {
 	glDeleteShader(vertex_shader);	
 	glDeleteShader(fragment_shader);	
 
-	return shader_program;
+	current_scene->shader_program = shader_program;
 }
 
-void shader_program_activate(unsigned int shader_program) {
-	glUseProgram(shader_program);
+void model_draw(model * draw_model) {
+	glBindVertexArray(draw_model->VAO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw_model->EBO);
+	glDrawElements(GL_TRIANGLES, draw_model->n_indices, GL_UNSIGNED_INT, 0);
+	GLenum error = glGetError();
+	if (error != GL_NO_ERROR) {
+		printf("Error detected: %x\n", error);
+	}
 }
 
 void shader_program_set_uniform_mat4(unsigned int shader_program, char * uniform_name, mat4 uniform_value) {
@@ -175,189 +364,42 @@ void shader_program_set_uniform_mat4(unsigned int shader_program, char * uniform
 	glUniformMatrix4fv(uniform_location, 1, GL_FALSE, (float *)uniform_value);
 }
 
-void shader_program_set_texture(unsigned int shader_program, char * uniform_name) {
-	unsigned int uniform_location = glGetUniformLocation(shader_program, "input_texture");	
-	glUniform1i(uniform_location, 0); //this zero coresonponds to GL_TEXTURE0
-}
-
-unsigned int texture_create(char * texture_path) {
-	unsigned int texture;
-	int texture_width, texture_height, texture_channels;
-	unsigned char * texture_data = stbi_load(texture_path, &texture_width, &texture_height, &texture_channels, 0);
-
-	if (!texture_data)
-		print_error("Failed to load texture.");
-
-	glGenTextures(1, &texture);
-	glActiveTexture(GL_TEXTURE0); //indicated you are working with texture 0
-	glBindTexture(GL_TEXTURE_2D, texture); //binds your texture to the active texture unit, in this case texture 0
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0, GL_RGB, GL_UNSIGNED_BYTE, texture_data);
-	glGenerateMipmap(GL_TEXTURE_2D);
-	stbi_image_free(texture_data);
-	return texture;
-}
-
-GLFWwindow * window_create() {
-	glfwInit();
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-	GLFWwindow * window = glfwCreateWindow(1920, 1080, "Shader display", NULL, NULL);
-
-	if (NULL == window)
-		print_error("Failed to create a window.");	
-
-	glfwMakeContextCurrent(window);
-	glfwSetFramebufferSizeCallback(window, window_resize_callback);
-	glfwSetCursorPosCallback(window, mouse_callback);
-	glfwPollEvents();
-	glViewport(0,0, 1920, 1080);	
-	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-	glewExperimental = GL_TRUE;
-	glewInit();
-	stbi_set_flip_vertically_on_load(true);
-
-	return window;
-}
-
-typedef struct basic_model {
-	unsigned int shader_program;
-	char *vertex_source;	
-	char *fragment_source;	
-	char *texture_source;
-	unsigned int VAO;
-	unsigned int VBO;
-	unsigned int EBO; 
-	unsigned int texture;	
-	mat4 transform;
-	mat4 view;
-	mat4 project;
-	mat4 lookat;
-	int n_indices;
-} basic_model;
-
-basic_model basic_model_create(char * texture_source, char * vertex_source, char * fragment_source, float * vertices, unsigned int * indices, unsigned int sizeof_vertices, unsigned int sizeof_indices) {
-	basic_model result;
-	result.vertex_source = strdup(vertex_source); 
-	result.fragment_source = strdup(fragment_source); 
-	result.shader_program = shader_program_create(result.vertex_source, result.fragment_source);
-	result.n_indices = sizeof_indices;
-
-	glGenVertexArrays(1, &result.VAO);
-	glBindVertexArray(result.VAO);
-
-	glGenBuffers(1, &result.VBO);
-	glBindBuffer(GL_ARRAY_BUFFER,result.VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof_vertices, vertices, GL_STATIC_DRAW); //problem was sizeof vertices...
-
-	glGenBuffers(1, &result.EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, result.EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof_indices, indices, GL_STATIC_DRAW);
+void scene_draw_objects(scene * draw_scene) {
 	
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8*sizeof(float), (void*)(6*sizeof(float)));
-	glEnableVertexAttribArray(1);
+	glUseProgram(draw_scene->shader_program);
+	int n_models = draw_scene->n_models;
 
-	result.texture_source = strdup(texture_source);
-	result.texture = texture_create(result.texture_source);
+	camera_get_look_at(draw_scene->lookat);
+	camera_get_projection(draw_scene->project);
 
-	return result;
+	shader_program_set_uniform_mat4(draw_scene->shader_program, "transform", draw_scene->transform);	
+	shader_program_set_uniform_mat4(draw_scene->shader_program, "view", draw_scene->lookat);	
+	shader_program_set_uniform_mat4(draw_scene->shader_program, "project", draw_scene->project);	
+
+	for (int i = 0; i < n_models; i ++) {
+		model_draw(draw_scene->models[i]);
+	} 
 }
 
-void basic_model_activate(basic_model model) {
-	shader_program_activate(model.shader_program);	
-	glBindVertexArray(model.VAO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.EBO);
-}
-
-void basic_model_initialize_textures(basic_model model) {
-	shader_program_set_texture(model.shader_program, "input_texture");
-}
-
-void basic_model_update_uniforms(basic_model * model) {
-	camera_get_look_at(model->lookat);
-	camera_get_projection(model->project);
-	shader_program_set_uniform_mat4(model->shader_program, "transform", model->transform);	
-	shader_program_set_uniform_mat4(model->shader_program, "view", model->lookat);	
-	shader_program_set_uniform_mat4(model->shader_program, "project", model->project);	
-}
-
-void basic_model_draw(basic_model model) {
-		glDrawElements(GL_TRIANGLES, model.n_indices, GL_UNSIGNED_INT, 0);
-}
-	
-void print_structure(struct aiNode * node) {
-	printf("New node with %d meshes and %d children.\n", node->mNumMeshes, node->mNumChildren);
-	for (int i = 0; i < node->mNumChildren; i++) {
-		print_structure(node->mChildren[i]);
-	}
-}
-
-basic_model basic_model_from_assimp() {
-	const struct aiScene * scene = aiImportFile("./backpack.obj", aiProcess_Triangulate | aiProcess_FlipUVs);	
-
-	if (NULL == scene) 
-		print_error("Assimp failed to load the model.");	
-
-	struct aiNode *root = scene->mRootNode;
-	print_structure(root);
-
-	aiReleaseImport(scene);
-}
-
-int main() {
-	
-	GLFWwindow * window = window_create();
+int main () {
+	//these two could run in parallel...
 	frame_time timer = frame_time_create();
+	GLFWwindow * window = window_create();	
+	scene * new_scene = scene_create("./backpack.obj");
 
-	//float vertices[] = {
-	//     0.5f,  0.5f, -1.0f, 0.0,0.0,0.0, 1.0, 1.0,// top right
-	//     0.5f, -0.5f, -1.0f, 0.0,0.0,0.0, 1.0, 0.0,// bottom right
-	//    -0.5f, -0.5f, -1.0f, 0.0,0.0,0.0, 0.0, 0.0,// bottom left
-	//    -0.5f,  0.5f, -1.0f, 0.0,0.0,0.0, 0.0, 1.0,// top left 
-	//     0.5f,  0.5f, -2.0f, 0.0,0.0,0.0, 1.0, 1.0,// top right
-	//     0.5f, -0.5f, -2.0f, 0.0,0.0,0.0, 1.0, 0.0,// bottom right
-	//    -0.5f, -0.5f, -2.0f, 0.0,0.0,0.0, 0.0, 0.0,// bottom left
-	//    -0.5f,  0.5f, -2.0f, 0.0,0.0,0.0, 0.0, 1.0// top left 
-	//};
-
-	//unsigned int indices [] = {
-	//    0, 1, 3,   // first triangle
-	//    1, 2, 3,    // second triangle
-	//    4, 5, 7,   // first triangle
-	//    5, 6, 7,    // second triangle
-	//} ;	
-
-	//basic_model model = basic_model_create("./wall.jpg","./vertex_shader.glsl", "./fragment_shader.glsl", vertices, indices, sizeof(vertices), sizeof(indices));
-
-	basic_model model = basic_model_from_assimp();
-	exit(0);
-
-	vec4 axis = {0.0, 0.0, 1.0};
-	glm_mat4_identity(model.transform);
-	glm_rotate(model.transform, 0, axis);
-	glm_translate_z(model.transform, -1.0);
-
-	basic_model_activate(model);
-	basic_model_initialize_textures(model);
-	basic_model_update_uniforms(&model);
-
+	scene_generate_buffers(new_scene);
+	scene_generate_shaders(new_scene, "./vertex_shader3.glsl", "./fragment_shader3.glsl");
+	
 	glEnable(GL_DEPTH_TEST);
 
 	while(!glfwWindowShouldClose(window)) {
-
 		frame_time_update(&timer);
 		process_input(window, timer);
 
 		glClearColor(0.9, 0.2, 0.2, 0.8);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		basic_model_activate(model);
-		basic_model_update_uniforms(&model);
-		basic_model_draw(model);
+		scene_draw_objects(new_scene);
 	
 		glfwSwapBuffers(window);
 		glfwPollEvents();
@@ -365,5 +407,4 @@ int main() {
 	}
 
 	glfwTerminate();
-
 }
