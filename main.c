@@ -535,6 +535,7 @@ int main () {
 	glm_translate_z(new_scene->transform, 0.0);
 
 	glEnable(GL_STENCIL_TEST);
+	glEnable(GL_CULL_FACE);
 
 	while(!glfwWindowShouldClose(window)) {
 		frame_time_update(&timer);
