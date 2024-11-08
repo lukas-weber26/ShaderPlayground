@@ -1,5 +1,4 @@
 #include "shader_viewer.h"
-#include <cglm/affine.h>
 #include <cglm/mat4.h>
 #include <cglm/vec3.h>
 
@@ -532,9 +531,7 @@ int main () {
 	//these transformations are just for fun
 	vec4 axis = {0.0, 0.0, 1.0};
 	glm_rotate(new_scene->transform, 0, axis);
-	glm_translate_z(new_scene->transform, 0.0);
-
-	glEnable(GL_STENCIL_TEST);
+	glm_translate_z(new_scene->transform, -1.0);
 
 	while(!glfwWindowShouldClose(window)) {
 		frame_time_update(&timer);
@@ -542,34 +539,28 @@ int main () {
 
 		glClearColor(0.0, 0.0, 0.0, 0.0);
 		
-		///
-			glEnable(GL_DEPTH_TEST);
-			glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);  
-			  
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT); 
+		glEnable(GL_DEPTH_TEST);
+		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
-			glStencilFunc(GL_ALWAYS, 1, 0xFF); 
-			glStencilMask(0xFF); 
-			new_scene->highlight = 1.0;	
-			glm_vec3((vec4) {0, 0,1.0,0.0}, new_scene->light_position);	
-			glm_mat4_identity(new_scene->transform);	
-			scene_draw_objects(new_scene);
-			  
-			glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
-			glStencilMask(0x00); 
-			
-			glDisable(GL_DEPTH_TEST);
+		glStencilFunc(GL_ALWAYS, 1, 0xFF);
+		glStencilMask(0xFF);
 
-			new_scene->highlight = 0.0;	
-			glm_vec3((vec4) {0, 0,1.0,0.0}, new_scene->light_position);	
-			glm_mat4_identity(new_scene->transform);	
-			glm_scale_uni(new_scene->transform, 1.1);	
-			scene_draw_objects(new_scene);
-			
-			glStencilMask(0xFF);
-			glStencilFunc(GL_ALWAYS, 0, 0xFF); 
+		new_scene->highlight = 1;	
+		glm_vec3((vec4) {0, 0,1.0,0.0}, new_scene->light_position);	
+		glm_mat4_scale(new_scene->transform, 1/1.1);	
+		glm_mat4_identity(new_scene->transform);	
+		scene_draw_objects(new_scene);
 
-		///
+		glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+		glStencilMask(0x00);
+		glDisable(GL_DEPTH_TEST);
+
+		new_scene->highlight = 0;	
+		glm_vec3((vec4) {0, 0,1.0,0.0}, new_scene->light_position);	
+		glm_mat4_identity(new_scene->transform);	
+		glm_mat4_scale(new_scene->transform, 1.1);	
+		scene_draw_objects(new_scene);
 	
 		glfwSwapBuffers(window);
 		glfwPollEvents();

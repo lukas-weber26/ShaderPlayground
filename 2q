@@ -1,5 +1,4 @@
 #include "shader_viewer.h"
-#include <cglm/affine.h>
 #include <cglm/mat4.h>
 #include <cglm/vec3.h>
 
@@ -301,7 +300,6 @@ scene * scene_create (char * model_name) {
 
 	glm_mat4_identity(new_scene->transform); //placed here for my sanity
 	glm_vec3_zero(new_scene->light_position);
-	new_scene->highlight = 0.0;
 	return new_scene;
 }
 
@@ -385,7 +383,7 @@ void check_shader_success(unsigned int shader, char * error_message) {
 }
 
 void scene_generate_shaders(scene * current_scene, char * vertex_path, char * fragment_path) {
-	char * shader_buffer = malloc(sizeof(char) * 4000);
+	char shader_buffer[2048]; 
 
 	const char * vertex_shader_source_submit = shader_load_from_file(vertex_path, shader_buffer); 
 	unsigned int vertex_shader = glCreateShader(GL_VERTEX_SHADER);
@@ -409,7 +407,6 @@ void scene_generate_shaders(scene * current_scene, char * vertex_path, char * fr
 	glDeleteShader(fragment_shader);	
 
 	current_scene->shader_program = shader_program;
-	free(shader_buffer);
 }
 
 void model_draw(model * draw_model, unsigned int shader_program) {
@@ -477,7 +474,7 @@ void scene_draw_objects(scene * draw_scene) {
 	shader_program_set_uniform_mat4(draw_scene->shader_program, "view", draw_scene->lookat);	
 	shader_program_set_uniform_mat4(draw_scene->shader_program, "project", draw_scene->project);	
 	
-	vec3 light_color = {0.90, 0.40, 0.2};
+	vec3 light_color = {0.85, 0.83, 0.8};
 	shader_program_set_uniform_vec3(draw_scene->shader_program, "light_color", light_color);
 
 	shader_program_set_uniform_vec3(draw_scene->shader_program, "light_position", draw_scene->light_position);
@@ -486,12 +483,11 @@ void scene_draw_objects(scene * draw_scene) {
 	vec3 ambient = {0.0, 0.2, 0.0};
 	vec3 diffuse= {0.8, 0.2, 0.0};
 	vec3 specular = {0.3, 0.3, 1.3};
-	float shinyness = 32;
+	float shinyness = 500;
 	shader_program_set_uniform_vec3(draw_scene->shader_program, "material.ambient", ambient);
 	shader_program_set_uniform_vec3(draw_scene->shader_program, "material.diffuse", diffuse);
 	shader_program_set_uniform_vec3(draw_scene->shader_program, "material.specular", specular);
 	shader_program_set_uniform_float(draw_scene->shader_program, "shinyness", shinyness);
-	shader_program_set_uniform_float(draw_scene->shader_program, "highlight", draw_scene->highlight);
 
 	for (int i = 0; i < n_models; i ++) {
 		model_draw(draw_scene->models[i], draw_scene->shader_program);
@@ -532,44 +528,20 @@ int main () {
 	//these transformations are just for fun
 	vec4 axis = {0.0, 0.0, 1.0};
 	glm_rotate(new_scene->transform, 0, axis);
-	glm_translate_z(new_scene->transform, 0.0);
-
-	glEnable(GL_STENCIL_TEST);
+	glm_translate_z(new_scene->transform, -1.0);
+	
+	glEnable(GL_DEPTH_TEST);
 
 	while(!glfwWindowShouldClose(window)) {
 		frame_time_update(&timer);
 		process_input(window, timer);
 
 		glClearColor(0.0, 0.0, 0.0, 0.0);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		glm_vec3((vec4) {0, 0, sin(glfwGetTime()),0.0}, new_scene->light_position);
 		
-		///
-			glEnable(GL_DEPTH_TEST);
-			glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);  
-			  
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT); 
-
-			glStencilFunc(GL_ALWAYS, 1, 0xFF); 
-			glStencilMask(0xFF); 
-			new_scene->highlight = 1.0;	
-			glm_vec3((vec4) {0, 0,1.0,0.0}, new_scene->light_position);	
-			glm_mat4_identity(new_scene->transform);	
-			scene_draw_objects(new_scene);
-			  
-			glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
-			glStencilMask(0x00); 
-			
-			glDisable(GL_DEPTH_TEST);
-
-			new_scene->highlight = 0.0;	
-			glm_vec3((vec4) {0, 0,1.0,0.0}, new_scene->light_position);	
-			glm_mat4_identity(new_scene->transform);	
-			glm_scale_uni(new_scene->transform, 1.1);	
-			scene_draw_objects(new_scene);
-			
-			glStencilMask(0xFF);
-			glStencilFunc(GL_ALWAYS, 0, 0xFF); 
-
-		///
+		scene_draw_objects(new_scene);
 	
 		glfwSwapBuffers(window);
 		glfwPollEvents();
